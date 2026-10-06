@@ -58,7 +58,7 @@ team_t team = {
 
 //Given block ptr bp, compute address of its header and footer
 #define HDRP(bp) ((char*)(bp)-WSIZE) //헤더 가리키는 포인터 반환
-#define FTRP(bp) ((char*)(bp)+GET_SIZE(HDRP(bp))-DSIZE)
+#define FTRP(bp) ((char*)(bp)+GET_SIZE(HDRP(bp))-DSIZE) //푸터 포인터 반환
 
 //Given block ptr bp, compute address of next and previous blocks
 #define NEXT_BLKP(bp) ((char*)(bp)+GET_SIZE(((char*)(bp)-WSIZE))) //다음 블록 페이로드 포인터  
@@ -69,6 +69,7 @@ team_t team = {
  * mm_init - initialize the malloc package.
  */
 static char *heap_listp; //프롤로그 블록을 가리키는 포인터
+
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
@@ -149,34 +150,7 @@ void *mm_malloc(size_t size)
     
 }
 
-//묵시적 가용리스트-first fit 
-static void *find_fit(size_t asize){
-    void *bp;
 
-    for(bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
-        if(!GET_ALLOC(HDRP(bp)) && (asize<=GET_SIZE(HDRP(bp)))){
-            return bp;
-        }
-    }
-    return NULL; //no fit 
-}
-
-static void place (void *bp,size_t asize){
-    size_t csize=GET_SIZE(HDRP(bp));
-
-    if((csize-asize)>=(2*DSIZE)){
-        PUT(HDRP(bp),PACK(asize,1));
-        PUT(FTRP(bp),PACK(asize,1));
-        bp=NEXT_BLKP(bp);
-        PUT(HDRP(bp),PACK(csize-asize,0));
-        PUT(FTRP(bp),PACK(csize-asize,0));
-    }
-
-    else{
-        PUT(HDRP(bp),PACK(csize,1));
-        PUT(FTRP(bp),PACK(csize,1));
-    }
-}
 
 /*
  * mm_free - Freeing a block does nothing.
@@ -244,4 +218,39 @@ void *mm_realloc(void *ptr, size_t size)
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
+}
+
+/*
+ * find_fit - 묵시적 가용 리스트, first fit
+ */
+static void *find_fit(size_t asize){
+    void* bp;
+
+    for (bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
+        if(!GET_ALLOC(HDRP(bp))&& asize<=GET_SIZE(HDRP(bp))){
+            return bp;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * place - 요청한 블록을 가용 블록의 시작 부분에 배치해야. 나머지는 최소 블록 크기와 같거나 큰 경우에만 분할 
+ */
+static void place(void *bp,size_t asize){ //asize=이번 요청에 필요한 블록 크기 
+    size_t csize=GET_SIZE(HDRP(bp)); //csize=지금 찾은 가용블록이 실제로 가진 크기 
+
+    //최소블록 크기와 같거나 큰 경우인지 확인
+    if((csize-asize)>=(2*DSIZE)){
+        PUT(HDRP(bp),PACK(asize,1));
+        PUT(FTRP(bp),PACK(asize,1));
+        bp=NEXT_BLKP(bp);
+
+        PUT(HDRP(bp),PACK((csize-asize),0));
+        PUT(FTRP(bp),PACK(csize-asize,0));
+    }
+    else{
+        PUT(HDRP(bp),PACK(csize,1));
+        PUT(FTRP(bp),PACK(csize,1));
+    }
 }
