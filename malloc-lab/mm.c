@@ -73,6 +73,7 @@ static char *heap_listp; //프롤로그 블록을 가리키는 포인터
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
+static void *best_fit(size_t asize);
 static void place (void *bp,size_t asize);
 
 int mm_init(void)
@@ -207,17 +208,69 @@ void *mm_realloc(void *ptr, size_t size)
 {
     void *oldptr = ptr;
     void *newptr;
+    size_t extendsize; //적합한 공간이 없을 때 힙을 확장할 크기 
+    size_t asize;
+    size_t csize;
     size_t copySize;
 
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    if (ptr==NULL){
+        return mm_malloc(size);
+    }
+
+    if(size==0){
+        mm_free(ptr);
         return NULL;
-    copySize = GET_SIZE(HDRP(oldptr))-DSIZE; //페이지크기
-    if (size < copySize)
-        copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
+    }
+
+    //다음 블록이 free일 때만 : csize=현재 블록 크기 + 다음 블록 크기 
+    csize=GET_SIZE(HDRP(ptr)); //다음 블록이 할당 or 에필로그면 현재 블록크기만큼만 가용 가능.
+    if (!GET_ALLOC(HDRP(NEXT_BLKP(ptr)))){ 
+        csize+=GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+    }
+    
+    //헤더,풋터를 포함한 필요한 크기 
+    if(size<=DSIZE){
+        asize=2*DSIZE;
+    }
+    else
+        asize=DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE); 
+
+    //필요한 크기가 현재 블록 크기보다 작을 때 
+    if(asize<=csize){
+        PUT(HDRP(ptr),PACK(csize,1)); 
+        PUT(FTRP(ptr),PACK(csize,1)); 
+        //기존 사이즈보다 더 작을 경우에 분할할 수 있으면 분할하기
+        place(ptr,asize);
+        // coalesce(NEXT_BLKP(ptr));
+        return ptr;
+    }
+
+    size_t nsize=GET_SIZE(HDRP(NEXT_BLKP(ptr))); //다음 블록 크기 
+    //가용 가능한 다음 블록이 요구 데이터보다 작을 때(부족함)->새로할당+복사+해제
+    if (asize>csize){ 
+
+        //에필로그인 경우
+        if(nsize==0){
+            extendsize=MAX(asize-csize,CHUNKSIZE);
+            void *bp=extend_heap(extendsize/WSIZE);
+            if (bp==NULL) return NULL;
+
+            //새로 할당 받은 힙 메모리를 현재 블록에 할당
+            csize+=GET_SIZE(HDRP(bp));
+            PUT(HDRP(ptr),PACK(csize,1)); //헤더 할당
+            PUT(FTRP(ptr),PACK(csize,1)); //헤더 할당
+            place(ptr,asize);
+            return ptr;
+        }
+            
+        newptr=mm_malloc(size);
+        copySize=GET_SIZE(HDRP(oldptr))-DSIZE; //payload만 복사
+        if(size<copySize)
+            copySize=size;
+        memcpy(newptr,oldptr,copySize); //oldptr->newptr에 복사 
+        mm_free(oldptr);
+        return newptr;
+    }
 }
 
 /*
@@ -235,6 +288,27 @@ static void *find_fit(size_t asize){
 }
 
 /*
+ * find_best_fit - best fit 방식 사용
+ */
+static void *best_fit(size_t asize){
+
+    void *bp;
+    void *best_bp=NULL;
+
+    for(bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
+        
+        if(!GET_ALLOC(HDRP(bp)) && asize<=GET_SIZE(HDRP(bp))){
+            if(best_bp==NULL || GET_SIZE(HDRP(best_bp))>GET_SIZE(HDRP(bp))){
+                best_bp=bp;
+            }
+            
+        }
+    }
+    return best_bp;
+
+}
+
+/*
  * place - 요청한 블록을 가용 블록의 시작 부분에 배치해야. 나머지는 최소 블록 크기와 같거나 큰 경우에만 분할 
  */
 static void place(void *bp,size_t asize){ //asize=이번 요청에 필요한 블록 크기 
@@ -244,13 +318,17 @@ static void place(void *bp,size_t asize){ //asize=이번 요청에 필요한 블
     if((csize-asize)>=(2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
         PUT(FTRP(bp),PACK(asize,1));
-        bp=NEXT_BLKP(bp);
 
+        //뒤에 남은 블록을 분할
+        bp=NEXT_BLKP(bp);
         PUT(HDRP(bp),PACK((csize-asize),0));
         PUT(FTRP(bp),PACK(csize-asize,0));
     }
     else{
+        //그냥 전체 다 할당
         PUT(HDRP(bp),PACK(csize,1));
         PUT(FTRP(bp),PACK(csize,1));
     }
 }
+
+
